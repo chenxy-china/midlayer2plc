@@ -23,6 +23,48 @@ namespace NSJsonClass {
         return MsgBase(jo.at("type").as_string());
     };
 
+    /*读取bits*/
+    class MsgGetBits:public MsgBase
+    {
+        public:
+            int address;
+            int size;
+            MsgGetBits(int address,int size):
+            address(address),size(size){};
+    };
+    void tag_invoke(boost::json::value_from_tag, boost::json::value &jv, MsgGetBits const &c) {
+        auto & jo = jv.emplace_object();
+        jo["type"] = c.type;
+        jo["address"] = c.address;
+        jo["size"] = c.size;
+    };
+
+    MsgGetBits tag_invoke(boost::json::value_to_tag<MsgGetBits>, boost::json::value const &jv) {
+        auto &jo = jv.as_object();
+        return MsgGetBits(jo.at("address").as_int64(),jo.at("size").as_int64());
+    };
+
+    /*读取多个寄存器*/
+    class MsgGetRegs:public MsgBase
+    {
+        public:
+            int address;
+            int size;
+            MsgGetRegs(int address,int size):
+            address(address),size(size){};
+    };
+    void tag_invoke(boost::json::value_from_tag, boost::json::value &jv, MsgGetRegs const &c) {
+        auto & jo = jv.emplace_object();
+        jo["type"] = c.type;
+        jo["address"] = c.address;
+    };
+
+    MsgGetRegs tag_invoke(boost::json::value_to_tag<MsgGetRegs>, boost::json::value const &jv) {
+        auto &jo = jv.as_object();
+        return MsgGetRegs(jo.at("address").as_int64(),jo.at("size").as_int64());
+    };
+
+    /*设置单个寄存器*/
     class MsgSetReg:public MsgBase
     {
         public:
@@ -35,6 +77,7 @@ namespace NSJsonClass {
 
     void tag_invoke(boost::json::value_from_tag, boost::json::value &jv, MsgSetReg const &c) {
         auto & jo = jv.emplace_object();
+        jo["type"] = c.type;
         jo["address"] = c.address;
         jo["value"] = c.value;
     };
@@ -44,31 +87,31 @@ namespace NSJsonClass {
         return MsgSetReg(jo.at("address").as_int64(),jo.at("value").as_int64());
     };
 
+    /*设置多个寄存器*/
     class MsgSetRegs:public MsgBase
     {
         public:
-            std::pair<int,int> regsSetting;
-            MsgSetRegs(std::pair<int,int> regsSetting):
-            regsSetting(regsSetting){};
-
-    };
-
-    class MsgGetReg:public MsgBase
-    {
-        public:
             int address;
+            int size;
             int value;
-            MsgGetReg(int address,int value=0):
-            address(address),value(value){};
+            MsgSetRegs(int address,int size,int value):
+            address(address),size(size),value(value){};
+
+    };
+    void tag_invoke(boost::json::value_from_tag, boost::json::value &jv, MsgSetRegs const &c) {
+        auto & jo = jv.emplace_object();
+        jo["type"] = c.type;
+        jo["address"] = c.address;
+        jo["size"] = c.size;
+        jo["value"] = c.value;
     };
 
-    class MsgGetRegs:public MsgBase
-    {
-        public:
-            std::pair<int,int> regsVal;
-            MsgGetRegs(std::pair<int,int> regsVal):
-            regsVal(regsVal){};
+    MsgSetRegs tag_invoke(boost::json::value_to_tag<MsgSetRegs>, boost::json::value const &jv) {
+        auto &jo = jv.as_object();
+        return MsgSetRegs(jo.at("address").as_int64(),jo.at("size").as_int64(),jo.at("value").as_int64());
     };
+
+    /////////////////////////////////////////////
 
     class MsgSubReg:public MsgBase
     {

@@ -7,8 +7,14 @@
 #include "MsgClass.h"
 
 boost::mutex global_stream_lock;
-
 int _closeflag = 1;
+
+//zeroMQ global data
+void *context;
+void *responder;
+//modbus global data
+modbus_t *mb;
+
 static void sig_handler(int signo)
 {
     printf("sig_handler\n");
@@ -31,65 +37,118 @@ void WorkerThread( boost::shared_ptr< boost::asio::io_service > io_service )
 	global_stream_lock.unlock();
 }
 
-void serverMQ(boost::shared_ptr< boost::asio::io_service > io_service, void *context, void * responder)
+void serverMQ(boost::shared_ptr< boost::asio::io_service > io_service)
 {
     char buffer [1024];
-    printf ("Receive wait tid %d \n",gettid());
     int ret = zmq_recv (responder, buffer, 256, 0);
     //接收消息
     if(ret == -1)
     {
         int error = zmq_errno();
-        std::cout << "ERROR: messageReceiver socket: wrong message --" << zmq_strerror(error) << std::endl;
+        std::cout << zmq_strerror(error) << std::endl;
         if(_closeflag == 0)
         {
-            zmq_close (responder);
-            zmq_ctx_destroy (context);
             std::cout << "messageReceiver thread closed......2" << std::endl;
             return;
         }
     } else {
-        printf ("Received\n");
+        std::cout <<"Received :"<< buffer << std::endl;
         
         //将字符串转换成boost::json::value
-        boost::json::value jsonObj = boost::json::value(buffer);
+        auto jv = boost::json::parse(buffer);
+        std::cout << "jv type:[" << typeid(jv).name() << "],value:" << jv << std::endl;
+        std::cout << jv.kind() << std::endl;
+
+        int rc = 0;
+
         //对收到的json字符串数据做解析
-        auto msgObj = boost::json::value_to<NSJsonClass::MsgBase>(jsonObj);
+        try{
+            auto msgObj = boost::json::value_to<NSJsonClass::MsgBase>(jv);
+            std::cout<< "msg type" << msgObj.type << std::endl;
 
-        std::cout<< "msg type" << msgObj.type << std::endl;
+            if(msgObj.type == "MsgGetBits"){
+                auto msgObj = boost::json::value_to<NSJsonClass::MsgGetBits>(jv);
+                std::cout << "Address ="<< msgObj.address<<", size = "<< msgObj.size << std::endl;
 
-        if(msgObj.type == "MsgSetReg"){
-            auto msgSetRegObj = boost::json::value_to<NSJsonClass::MsgSetReg>(jsonObj);
-
-            std::cout<< "set reg ["<< msgSetRegObj.address << "] = "
-                << msgSetRegObj.value << "(0x"<< std::hex <<  msgSetRegObj.value << ")" << std::endl;
-            zmq_send (responder, "ok", 2, 0);
+                string responmsg = "ok";
+                if(msgObj.size > MODBUS_MAX_READ_BITS){
+                    responmsg = "size over max red bits";
+                }else{
+                    //通过modbus读取线圈
+                    std::unique_ptr<uint8_t[]> tab_bit = std::make_unique<uint8_t[]>(msgObj.size);
+                    memset(tab_bit.get(), 0, msgObj.size * sizeof(uint8_t));
+                    rc = modbus_read_bits(mb, msgObj.address, msgObj.size, tab_bit.get());
+                    if (rc == -1)
+                    {
+                        std::cout << modbus_strerror(errno) << std::endl;
+                    }
+                    boost::json::object obresp;
+                    boost::json::array arrbitv;
+                    obresp["address"] = msgObj.address;
+                    obresp["size"] = msgObj.size;
+                    for(int i = 0;i < msgObj.size; i++){
+                        arrbitv.push_back(tab_bit[i]);
+                    }
+                    obresp["resp"] = arrbitv;
+                    
+                    responmsg = boost::json::serialize(obresp);
+                    std::cout << "response msg:" << responmsg << std::endl;
+                    std::cout << "size =" << responmsg.size() << std::endl;
+                }
+                zmq_send (responder, responmsg.c_str(), responmsg.size(), 0);
+            }else if(msgObj.type == "MsgSetReg"){
+                auto msgObj = boost::json::value_to<NSJsonClass::MsgSetReg>(jv);
+                std::cout << "Address ="<< msgObj.address<<", value = 0x"<< std::hex << msgObj.value << std::endl;
+                //通过modbus设置寄存器的值
+                rc = modbus_write_register(mb, msgObj.address, msgObj.value);
+                if (rc == -1)
+                {
+                    std::cout << modbus_strerror(errno) << std::endl;
+                }
+                zmq_send (responder, "ok", 2, 0);
+            }
+            
+        }catch(std::exception e)
+        {
+            std::cout << "value_to failed: " << e.what() << "\n";
+            zmq_send (responder, "ng", 2, 0);
         }
     }
 
-	io_service->post( boost::bind( &serverMQ, io_service,context, responder ) );
+    io_service->post( boost::bind( &serverMQ, io_service) );
 }
 
-int initMQ(boost::shared_ptr< boost::asio::io_service > io_service)
+int initMQ()
 {
     //  Socket to talk to clients
-    void *context = zmq_ctx_new ();
-    void *responder = zmq_socket (context, ZMQ_REP);
+    context = zmq_ctx_new ();
+    responder = zmq_socket (context, ZMQ_REP);
 
-    int recvTime = 500;
+    int recvTime = 5000;
     zmq_setsockopt(responder, ZMQ_RCVTIMEO, &recvTime, sizeof(recvTime));
 
     int rc = zmq_bind (responder, "tcp://*:5555");
     assert (rc == 0);
-
-	io_service->post( boost::bind( &serverMQ, io_service ,context, responder) );
 
     return 0;
 }
 
 int initModbus()
 {
+    uint16_t tab_reg[32];
+    int i;
+    int rc;
 
+    //打开端口
+    mb = modbus_new_tcp("192.168.181.1", 502);
+    modbus_set_slave(mb, 1);
+
+    //建立链接
+    if(modbus_connect(mb)==-1) {
+        std::cout << "Modbus Connection failed:" << modbus_strerror(errno) << std::endl;
+        modbus_free(mb);
+        return -1;
+    }
     return 0;
 }
 
@@ -106,6 +165,17 @@ int main(int argc , char** argv)
         return -1;
     }
 
+    if(initModbus() != 0)
+    {
+        return -1;
+    }
+    if(initMQ() != 0)
+    {
+        modbus_close(mb);
+        modbus_free(mb);
+        return -1;
+    }
+
     boost::shared_ptr< boost::asio::io_service > io_service(new boost::asio::io_service);
 	boost::shared_ptr< boost::asio::io_service::work > work(new boost::asio::io_service::work( *io_service ));
 
@@ -115,7 +185,7 @@ int main(int argc , char** argv)
 		worker_threads.create_thread( boost::bind( &WorkerThread, io_service ) );
 	}
 
-    initMQ(io_service);
+	io_service->post( boost::bind( &serverMQ, io_service) );
 
     while(_closeflag){
         sleep(100);
@@ -125,5 +195,12 @@ int main(int argc , char** argv)
 	io_service->stop();
 	worker_threads.join_all();
 
+    zmq_close (responder);
+    zmq_ctx_destroy (context);
+
+    modbus_close(mb);
+    modbus_free(mb);
+
     printf("success quit~\n");
+    return 0;
 }
