@@ -57,6 +57,7 @@ namespace NSJsonClass {
         auto & jo = jv.emplace_object();
         jo["type"] = c.type;
         jo["address"] = c.address;
+        jo["size"] = c.size;
     };
 
     MsgGetRegs tag_invoke(boost::json::value_to_tag<MsgGetRegs>, boost::json::value const &jv) {
@@ -93,8 +94,8 @@ namespace NSJsonClass {
         public:
             int address;
             int size;
-            int value;
-            MsgSetRegs(int address,int size,int value):
+            std::vector<int> value;
+            MsgSetRegs(int address,int size,std::vector<int> value):
             address(address),size(size),value(value){};
 
     };
@@ -103,12 +104,13 @@ namespace NSJsonClass {
         jo["type"] = c.type;
         jo["address"] = c.address;
         jo["size"] = c.size;
-        jo["value"] = c.value;
+        jo["value"] = value_from(c.value);
     };
 
     MsgSetRegs tag_invoke(boost::json::value_to_tag<MsgSetRegs>, boost::json::value const &jv) {
         auto &jo = jv.as_object();
-        return MsgSetRegs(jo.at("address").as_int64(),jo.at("size").as_int64(),jo.at("value").as_int64());
+        auto vec_v = value_to< std::vector< int > >(jo.at("value"));
+        return MsgSetRegs(jo.at("address").as_int64(),jo.at("size").as_int64(),vec_v);
     };
 
     /////////////////////////////////////////////
