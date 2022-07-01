@@ -1,0 +1,5 @@
+CC = gcc
+CFLAGS = -I../include -g -O2 -Wall
+LIBS = -L../lib -lzmq
+
+CLEANFILES = core core.* *.core *.o *.out
